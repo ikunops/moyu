@@ -1,0 +1,10 @@
+# 构建产物（运行 build.cmd 自动生成）
+build/
+
+# 运行时数据
+udf/
+*.log
+
+# 系统
+Thumbs.db
+desktop.ini

@@ -1,0 +1,133 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>碧潭观鱼 · 桌面</title>
+<style>
+  html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#0a1e26; cursor:none; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
+</style>
+</head>
+<body>
+<canvas id="pond"></canvas>
+<script src="art.js"></script>
+<script src="scene.js"></script>
+<script src="pond.js"></script>
+<script>
+(function () {
+  var cv = document.getElementById('pond'), g = cv.getContext('2d');
+  var fish = null, W = 1440, H = 900;
+
+  /* 视口自适应：按窗口实际像素重设画布，保持 16:10 场景比例 */
+  function resize() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 1);   // 软件合成下 1x 足够
+    var vw = window.innerWidth || 1440, vh = window.innerHeight || 900;
+    W = Math.round(vw * dpr); H = Math.round(vh * dpr);
+    cv.width = W; cv.height = H;
+    // 场景按视口重算（鱼的位置/尺寸依赖 W/H）
+    Scene.W = W; Scene.H = H;
+    g._L0 = g._L3 = g._L4 = null;      // 让图层按新尺寸重建
+    // 鱼数按对角线比例（不是面积），并限制上限：软件合成下 136 条只有 27fps
+    var k = Math.min(W / 1440, H / 900);
+    var n = Math.max(16, Math.min(46, Math.round(34 * (0.55 + k * 0.45))));
+    fish = Scene.build(20260928, n);
+    t0 = performance.now();
+  }
+  var t0 = performance.now();
+  window.addEventListener('resize', resize);
+  resize();
+  Pond.updateWeather();
+  setInterval(Pond.updateWeather, 10 * 60 * 1000);
+
+  /* 左键：点面板 = 展开/收起；点水面 = 喂食
+     双击 = 大量投食 + 附近鱼群冲刺过去（符合真实喂鱼） */
+  var lastClick = 0;
+  cv.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0) return;
+    var dpr = Math.min(window.devicePixelRatio || 1, 1);
+    var x = e.clientX * dpr, y = e.clientY * dpr;
+
+    // 命中面板 -> 展开/收起
+    if (Pond.hitHUD(x, y)) {
+      Pond.HUD.expanded = !Pond.HUD.expanded;
+      return;
+    }
+
+    var now = performance.now();
+    var dbl = (now - lastClick) < 320;
+    lastClick = now;
+
+    if (dbl) {
+      // 双击：大量投食 + 冲刺
+      Pond.feed(x, y, 2.0);
+      var cnt = Pond.burstTo(fish, x, y, Math.max(W, H) * 0.75);
+      console.log('burst: ' + cnt + ' fish');
+    } else {
+      Pond.feed(x, y, 1.0);
+    }
+  });
+  /* ---- 接收宿主（全局鼠标钩子）转发的消息 ----
+     壁纸层窗口收不到鼠标事件，所以由 C# 宿主用 WH_MOUSE_LL 捕获后 PostWebMessage 过来 */
+  function fromHost(ev) {
+    var m = ev.data;
+    if (!m || typeof m !== 'object') return;
+    // 宿主给的是物理像素；页面画布按 dpr 缩放
+    var dpr = Math.min(window.devicePixelRatio || 1, 1);
+    var sx = cv.width / (m.w || cv.width);
+    var sy = cv.height / (m.h || cv.height);
+    var x = m.x * sx, y = m.y * sy;
+
+    if (m.t === 'm') {
+      mouse.x = x; mouse.y = y; mouse.on = true;
+      return;
+    }
+    if (m.t === 'c') {
+      mouse.x = x; mouse.y = y; mouse.on = true;
+      if (Pond.hitHUD(x, y)) { Pond.HUD.expanded = !Pond.HUD.expanded; return; }
+      if (m.d === 1) {
+        Pond.feed(x, y, 2.0);
+        Pond.burstTo(fish, x, y, Math.max(W, H) * 0.85);
+      } else {
+        Pond.feed(x, y, 1.0);
+      }
+      return;
+    }
+    if (m.t === 'r') {
+      Pond.HUD.show = !Pond.HUD.show;
+    }
+  }
+  if (window.chrome && window.chrome.webview) {
+    window.chrome.webview.addEventListener('message', fromHost);
+  }
+  /* 鼠标位置：用于"鱼避让光标" */
+  var mouse = { x: -1, y: -1, on: false };
+
+  /* 右键 = 显示/隐藏面板 */
+  cv.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    Pond.HUD.show = !Pond.HUD.show;
+  });
+
+  /* 主循环 */
+  var last = performance.now(), acc = 0;
+  function frame(now) {
+    requestAnimationFrame(frame);
+    var dt = (now - last) / 1000; last = now;
+    if (dt > 0.25) dt = 0.25;
+    acc += dt;
+    var step = 1 / 60;
+    while (acc >= step) {
+      Scene.step(fish, (now - t0) / 1000);
+      acc -= step;
+    }
+    var night = false;
+    var hh = new Date().getHours();
+    if (hh >= 19 || hh < 6) night = true;      // 跟随本地时间
+    Scene.render(g, fish, (now - t0) / 1000, night);
+  }
+  requestAnimationFrame(frame);
+  window.__ready = true;
+})();
+</script>
+</body>
+</html>
